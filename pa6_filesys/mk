@@ -1,0 +1,6 @@
+mkdisk
+
+rm a.out
+#cc main.c util.c OBJ/*.o
+cc *.c OBJ/*.o
+a.out
