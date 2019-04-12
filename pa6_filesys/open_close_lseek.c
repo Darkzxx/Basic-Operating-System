@@ -448,7 +448,7 @@ int write_file()
     // check fd exist
     if(running->fd[fd] == 0)
     {
-        printf("ERROR: running->fd[%d] doesn't exist\n");
+        printf("ERROR: running->fd[%d] doesn't exist\n", fd);
         return -1;
     }
     
@@ -592,6 +592,109 @@ int my_write(int fd, char buf[], int nbytes)
     return oribytes;
 }
 
+// read_file: check reading condition
+int read_file()
+{
+    int nbyte, fd;
+    char buf[BLKSIZE];
+    OFT *oftp;
+
+    // check pathname and parameter are given
+    if(pathname[0] == 0 || parameter[0] == 0)
+    {
+        printf("FORMAT ERROR: read (int)file_descriptor (int)number_of_byte_to_read\n");
+        return -1;
+    }
+    
+    fd = atoi(pathname);
+    nbyte = atoi(parameter);
+
+    // check fd exists
+    if(running->fd[fd] == 0)
+    {
+        printf("ERROR: running->fd[%d] doesn't exist\n", fd);
+        return -1;
+    }
+
+    // check if it's open for R|RW
+    oftp = running->fd[fd];
+    if(oftp->mode % 2 == 1)
+    {
+        printf("ERROR: file wasn't open for R|RW\n");
+        return -1;
+    }
+    return my_read(fd, buf, nbyte);
+}
+
+// read helper function like syscall read()
+int my_read(int fd, char* buf, int nbyte)
+{
+    int lbk, offset, start, remain, avail, blk;
+    int dbuf[256], ebuf[256];
+    char readbuf[BLKSIZE];
+    MINODE *mip;
+    int count = 0, least;
+    char *cp, *cq;
+
+    offset = running->fd[fd]->offset;
+    mip = iget(running->fd[fd]->mptr->dev, running->fd[fd]->mptr->ino);
+
+    // byte avail for read
+    avail = running->fd[fd]->mptr->INODE.i_size;
+
+    while(nbyte > 0 && avail > 0)
+    {
+        // current byte position
+        lbk = offset / BLKSIZE;
+        // byte to start reading
+        start = offset % BLKSIZE;
+
+        if(lbk < 12)    // direct block
+            blk = mip->INODE.i_block[lbk];
+        else if(lbk >= 12 && lbk < 256 + 12)    // indirect block
+        {
+            get_block(mip->dev, mip->INODE.i_block[12], dbuf);
+            blk = dbuf[lbk-12];
+        }
+        else    // double indirect block
+        {
+            get_block(mip->dev, mip->INODE.i_block[13], dbuf);
+            get_block(mip->dev, dbuf[(lbk - (156 + 12)) / 256], ebuf);
+            blk = ebuf[(lbk-156-12) % 256];
+        }
+
+        // get data block into readbuf
+        get_block(mip->dev, blk, readbuf);
+
+        cp = readbuf + start;   // real data buffer
+        cq = buf;               // buffer for read
+        // remaining byte on lbk
+        remain = BLKSIZE - start;
+
+        if(remain > 0)
+        {
+            // get the least of avail, remain and nbyte
+            least = nbyte;
+            if(least > avail)
+                least = avail;
+            if(least > remain)
+                least = remain;
+
+            memcpy(cq, cp, least);
+            running->fd[fd]->offset += least;
+            count += least;
+            avail -= least;
+            nbyte -= least;
+        }
+    }
+    
+    printf("read %d char\n", count);
+    if(avail == 0)
+        printf("There is no more to read\n");
+
+    iput(mip);
+    return count;
+}
 
 
 
