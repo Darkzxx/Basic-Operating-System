@@ -69,7 +69,7 @@ char *disk = "disk";
 int main(int argc, char *argv[ ])
 {
     int ino;
-    char buf[BLKSIZE];
+    char buf[BLKSIZE], *token;
     char line[256], cmd[64], path[128];
 
     if (argc > 1)
@@ -117,7 +117,7 @@ int main(int argc, char *argv[ ])
     while(1){
         printf("-------------------------- input command ------------------------\n"); 
         printf(" [ls|cd|pwd|mkdir|creat|rmdir|link|unlink|symlink|readlink|quit] \n");
-        printf("                         [open|close|pfd]                        \n");
+        printf("                 [open|close|lseek|pfd|write|read]               \n");
         printf("-----------------------------------------------------------------\n");
         printf(">> ");
         gets(line);
@@ -127,6 +127,13 @@ int main(int argc, char *argv[ ])
         parameter[0] = 0;
 
         sscanf(line, "%s %s %s", cmd, pathname, parameter);
+
+        token = strtok(line, " ");
+        token = strtok(NULL, " ");
+        token = strtok(NULL, "\0");
+        if(token != 0)
+            strcpy(parameter, token);
+
         printf("cmd=%s path=%s param=%s\n", cmd, pathname, parameter);
 
         if (strcmp(cmd, "ls")==0)
@@ -167,8 +174,17 @@ int main(int argc, char *argv[ ])
         if(strcmp(cmd, "close")==0)
             close_file();
         
+        if(strcmp(cmd, "lseek")==0)
+            my_lseek();
+        
         if(strcmp(cmd, "pfd")==0)
             pfd();
+        
+        if(strcmp(cmd, "write")==0)
+            write_file();
+        
+        if(strcmp(cmd, "read")==0)
+            read_file();
 
         if (strcmp(cmd, "quit")==0)
             quit();
