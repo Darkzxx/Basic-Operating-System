@@ -65,7 +65,7 @@ int mount_root()
     root = iget(dev, 2);
 }
 
-char *disk = "disk";
+char *disk = "mydisk";
 int main(int argc, char *argv[ ])
 {
     int ino;
@@ -117,7 +117,7 @@ int main(int argc, char *argv[ ])
     while(1){
         printf("-------------------------- input command ------------------------\n"); 
         printf(" [ls|cd|pwd|mkdir|creat|rmdir|link|unlink|symlink|readlink|quit] \n");
-        printf("                 [open|close|lseek|pfd|write|read]               \n");
+        printf("             [open|close|lseek|pfd|write|read|cat|cp]            \n");
         printf("-----------------------------------------------------------------\n");
         printf(">> ");
         gets(line);
@@ -185,6 +185,12 @@ int main(int argc, char *argv[ ])
         
         if(strcmp(cmd, "read")==0)
             read_file();
+        
+        if(strcmp(cmd, "cat")==0)
+            my_cat();
+
+        if(strcmp(cmd, "cp") == 0)
+            my_cp();
 
         if (strcmp(cmd, "quit")==0)
             quit();

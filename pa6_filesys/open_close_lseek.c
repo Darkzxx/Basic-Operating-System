@@ -74,7 +74,6 @@ int open_file()
 {
     int mode = -1, ino, f_mode, i ,fd;
     int u_perm = 0, g_perm = 0;
-    char md[5];
     MINODE *mip;
     OFT *oftp;
 
@@ -109,17 +108,6 @@ int open_file()
     }
     if(mode == -1)
         mode = atoi(parameter);
-
-    /*if(!strcmp(parameter, "R"))
-        mode = 0;
-    else if(!strcmp(parameter, "W"))
-        mode = 1;
-    else if (!strcmp(parameter, "RW"))
-        mode = 2;
-    else if (!strcmp(parameter, "AP"))
-        mode = 3;
-    else  
-        mode = atoi(parameter);*/
 
     // incorrect mode
     if(mode < 0 || mode > 3)
@@ -274,6 +262,7 @@ int open_file()
 
     // mark dirty
     mip->dirty = 1;
+    iput(mip);
 
     // return file descripter i
     return i;
@@ -295,7 +284,7 @@ int close_file()
     }
 
     fd = atoi(pathname);
-    printf("fd = %d\n", fd);
+    printf("close fd = %d\n", fd);
     // verify fd is within range
     if(fd < 0 || fd >= NFD)
     {
@@ -376,7 +365,10 @@ int my_lseek()
         if(!oft[i].mptr)
             continue;
         if(running->fd[fd] == &oft[i])
+        {
+            oftp = running->fd[fd];
             break;
+        }
     }
     if(i >= NOFT)
     {
@@ -394,7 +386,7 @@ int my_lseek()
     // change OFT entry's offset to position
     ori = oftp->offset;
     oftp->offset = position;
-
+ 
     // return original position
     return ori;
 }
@@ -414,8 +406,19 @@ int pfd()
             continue;
         
         oftp = running->fd[i];
-        printf("  %2d     %s      %d     [%d, %d]\n", i, filemode[oftp->mode],
-            oftp->offset, oftp->mptr->dev, oftp->mptr->ino);
+        printf("  %2d     %s      %d     [%d, %d]  %x\n", i, filemode[oftp->mode],
+            oftp->offset, oftp->mptr->dev, oftp->mptr->ino, oftp->mptr);
+    }
+
+    printf("----------- oft ----------------\n");
+    for(i=0; i < NOFT; i++)
+    {
+        if(!oft[i].mptr)
+            continue;
+        
+        oftp = &oft[i];
+        printf("  %2d     %s      %d     [%d, %d]  %x\n", i, filemode[oftp->mode],
+            oftp->offset, oftp->mptr->dev, oftp->mptr->ino, oftp->mptr);
     }
 }
 
@@ -640,7 +643,7 @@ int my_read(int fd, char* buf, int nbyte)
     mip = iget(running->fd[fd]->mptr->dev, running->fd[fd]->mptr->ino);
 
     // byte avail for read
-    avail = running->fd[fd]->mptr->INODE.i_size;
+    avail = running->fd[fd]->mptr->INODE.i_size - offset;
 
     while(nbyte > 0 && avail > 0)
     {
@@ -688,13 +691,118 @@ int my_read(int fd, char* buf, int nbyte)
         }
     }
     
-    printf("read %d char\n", count);
-    if(avail == 0)
-        printf("There is no more to read\n");
-
+    //printf("read %d char\n", count);
     iput(mip);
     return count;
 }
+
+// read and print content of file
+int my_cat()
+{
+    char mybuf[BLKSIZE];
+    int i, k, fd;
+
+    // check pathname is given
+    if(pathname[0] == 0)
+    {
+        printf("FORMAT ERROR: cat (string)pathname\n");
+        return -1;
+    }
+
+    // put R mode in parameter
+    strcpy(parameter, "R");
+
+    // open file for read
+    if((fd = open_file()) < 0)
+        return -1;
+    
+    // reading loop
+    while((i = my_read(fd, mybuf, BLKSIZE)) > 0)
+    {
+        mybuf[i] = 0;   // null char at end
+        // spit out each char from mybuf
+        for(k=0; k < i; k++)
+            putchar(mybuf[k]);
+    }
+    printf("\n");
+
+    // preparation to close file
+    sprintf(pathname, "%d", fd);
+    parameter[0] = 0;
+
+    // close file
+    if(close_file() < 0)
+        return -1;
+}
+
+// copy file to another file
+int my_cp()
+{
+    char src[256], dest[256], buf[BLKSIZE];
+    char parent[256];
+    int fd, gd, i, ino;
+    MINODE *pip, *mip;
+
+    // check pathname is given
+    if(pathname[0] == 0 || parameter[0]==0)
+    {
+        printf("FORMAT ERROR: cp (string)source (string)destination\n");
+        return -1;
+    }
+
+    strcpy(src, pathname);
+    strcpy(dest, parameter);
+    printf("src = %s, pathname = %s\n", src, pathname);
+    printf("dest = %s, parameter = %s\n", dest, parameter);
+    
+    // open src for R
+    strcpy(parameter, "R");
+    if((fd = open_file()) < 0)
+    {   
+        printf("ERROR: failed to open source file\n");
+        return -1;
+    }
+    pfd();
+    strcpy(pathname, dest);
+    parameter[0] = 0;
+
+    // creat file if not already exist
+    printf("create file\n");
+    if(creat_file() < 0)
+    {
+        if((ino = getino(pathname)) == 0)
+        {
+            printf("creat %s failed\n", dest);
+            return -1;
+        }
+    }
+
+    strcpy(parameter, "W");
+
+    // open file
+    pfd();
+    if((gd = open_file()) < 0)
+    {
+        pfd();
+        printf("cp ERROR: can't open file\n");
+        return -1;
+    }
+
+    // transfer data from src to dest
+    while(i = my_read(fd, buf, BLKSIZE))
+        my_write(gd, buf, i);
+    
+    // close src
+    sprintf(pathname, "%d", fd);
+    close_file();
+
+    // close dest
+    sprintf(pathname, "%d", gd);
+    close_file();
+
+    return 0;
+}
+
 
 
 
