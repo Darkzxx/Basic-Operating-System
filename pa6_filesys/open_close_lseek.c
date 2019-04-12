@@ -81,7 +81,7 @@ int open_file()
     // check pathname is given
     if(pathname[0] == 0 || parameter[0] == 0)
     {
-        printf("FORMAT ERROR: open [pathname] [mode]\n");
+        printf("FORMAT ERROR: open (string)pathname (string|int)mode\n");
         printf("mode: R|W|RW|AP  or  0|1|2|3\n");
         return -1;
     }
@@ -289,8 +289,8 @@ int close_file()
     // check pathname is given
     if(pathname[0] == 0)
     {
-        printf("FORMAT ERROR: close [file_descripter]\n");
-        printf("see file descripter by using command: pfd\n");
+        printf("FORMAT ERROR: close (int)file_descripter\n");
+        printf("see available file descripter by using command: pfd\n");
         return -1;
     }
 
@@ -342,6 +342,63 @@ int close_file()
     return 0;
 }
 
+int my_lseek()
+{
+    int fd, position, i, ori;
+    OFT *oftp;
+
+    // check pathname and parameter are given
+    if(pathname[0] == 0 || parameter[0] == 0)
+    {
+        printf("FORMAT ERROR: lseek (int)file_descriptor (int)position\n");
+        return -1;
+    }
+
+    fd = atoi(pathname);
+    position = atoi(parameter);
+
+    // verify fd is within range
+    if(fd < 0 || fd >= NFD)
+    {
+        printf("ERROR: fd is out of range\n");
+        return -1;
+    }
+
+    // verify running->fd[fd] exists
+    if(running->fd[fd] == 0)
+    {
+        printf("ERROR: running->fd[%d] doesn't exist\n", fd);
+        return -1;
+    }
+    // get oft entry if it exists
+    for(i=0; i < NOFT; i++)
+    {
+        if(!oft[i].mptr)
+            continue;
+        if(running->fd[fd] == &oft[i])
+            break;
+    }
+    if(i >= NOFT)
+    {
+        printf("ERROR: no such fd in oft\n");
+        return -1;
+    }
+
+    // make sure not to over run either end of the file
+    if(position < 0 || position > oftp->mptr->INODE.i_size)
+    {
+        printf("ERROR: position value can only be between 0 - %d\n", oftp->mptr->INODE.i_size);
+        return -1;
+    }
+
+    // change OFT entry's offset to position
+    ori = oftp->offset;
+    oftp->offset = position;
+
+    // return original position
+    return ori;
+}
+
 // print fd
 int pfd()
 {
@@ -360,16 +417,179 @@ int pfd()
         printf("  %2d     %s      %d     [%d, %d]\n", i, filemode[oftp->mode],
             oftp->offset, oftp->mptr->dev, oftp->mptr->ino);
     }
+}
 
-    for(i=0; i < NOFT; i++)
+// write_file : check all writing conditions
+int write_file()
+{
+    int fd, nbytes;
+    char buf[BLKSIZE];
+    OFT *oftp;
+
+    // check pathname and parameter are given
+    if(pathname[0] == 0 || parameter[0] == 0)
     {
-        if(!oft[i].mptr)
-            continue;
-        
-        oftp = &oft[i];
-        printf("  %2d     %s      %d     [%d, %d]\n", i, filemode[oftp->mode],
-            oftp->offset, oftp->mptr->dev, oftp->mptr->ino);
+        printf("FORMAT ERROR: write (int)fd (string)words\n");
+        return -1;
     }
+
+    fd = atoi(pathname);
+
+    // string into buf
+    strcpy(buf, parameter);
+    
+    // check fd is in range
+    if(fd < 0 || fd >= NFD)
+    {
+        printf("ERROR: fd out of range\n");
+        return -1;
+    }
+
+    // check fd exist
+    if(running->fd[fd] == 0)
+    {
+        printf("ERROR: running->fd[%d] doesn't exist\n");
+        return -1;
+    }
+    
+    oftp = running->fd[fd];
+
+    // return if file not in W|RW|AP mode
+    if(oftp->mode == 0)
+    {
+        printf("ERROR: fd is not open for W|RW|AP\n");
+        return -1;
+    }
+    // call helper function
+    return my_write(fd, buf, strlen(buf));
+}
+
+// zero out the block
+int clr_blk(int buf[])
+{
+    int i, n;
+    n = sizeof(buf) / sizeof(buf[0]);
+    for(i=0; i < n; i++)
+        buf[i] = 0;
+}
+
+// write helper function: write syscall()
+int my_write(int fd, char buf[], int nbytes)
+{
+    MINODE *mip = running->fd[fd]->mptr;
+    int offset = running->fd[fd]->offset;
+    int oribytes = nbytes;
+    int new, i;
+
+    char wbuf[BLKSIZE];
+    int lbk, start, remain, least;
+    int blk, ibuf0[256], ibuf1[256];
+
+    OFT *oftp = running->fd[fd];
+
+    // write data into fd (lbk by lbk)
+    while(nbytes > 0)
+    {
+        // compute logical block (lbk)
+        lbk = oftp->offset / BLKSIZE;
+        start = oftp->offset % BLKSIZE;
+        remain = BLKSIZE - start;
+        new = 0;
+        printf("lbk = %d, start = %d, remain = %d\n", lbk, start, remain);
+
+        // find data block to write to
+        if(lbk < 12)    // direct block
+        {
+            if(mip->INODE.i_block[lbk] == 0)    // if block has no data
+            {
+                mip->INODE.i_block[lbk] = balloc(mip->dev); // allocate block
+                printf("new allocated direct blk = %d\n", mip->INODE.i_block[lbk]);
+            }
+            blk = mip->INODE.i_block[lbk];
+        }
+        else if(lbk >= 12 && lbk < 256 + 12)    // indirect block
+        {
+            if(mip->INODE.i_block[12] == 0)     // if block 12 has no data
+            {
+                mip->INODE.i_block[12] = balloc(mip->dev);  // allocate a block
+                new = 1;
+            }
+            get_block(dev, mip->INODE.i_block[12], ibuf0);
+            
+            if(new)     // zero out ibuf0 if it's new
+                clr_blk(ibuf0);
+
+            if(ibuf0[lbk - 12] == 0)    // if block has no data
+            {
+                ibuf0[lbk - 12] = balloc(mip->dev); // allocate block
+                printf("new allocated indirect blk = %d\n", ibuf0[lbk - 12]);
+            }
+
+            blk = ibuf0[lbk - 12];
+            put_block(dev, mip->INODE.i_block[12], ibuf0); // update the change
+        }
+        else    // double indirect block
+        {
+            if(mip->INODE.i_block[13] == 0) // if block 13 has no data
+            {
+                mip->INODE.i_block[13] = balloc(mip->dev);
+                new = 1;
+            }
+            get_block(dev, mip->INODE.i_block[13], ibuf0);
+
+            if(new)     // zero out blk if new
+                clr_blk(ibuf0);
+            new = 0;
+            
+            if(ibuf0[(lbk - (256 + 12)) / 256] == 0) // first indirect
+            {
+                ibuf0[(lbk - (256 + 12)) / 256] = balloc(mip->dev); 
+                new = 1;
+            }
+            put_block(dev, mip->INODE.i_block[13], ibuf0);
+            get_block(dev, ibuf0[(lbk - (256 + 12)) / 256], ibuf1);
+
+            if(new)     // zero out blk if new
+                clr_blk(ibuf0);
+
+            if(ibuf1[(lbk - (256 + 12)) % 256] == 0) // second indirect
+            {
+                ibuf1[(lbk - (256 + 12)) % 256] = balloc(mip->dev);
+                printf("new allocated double indirect blk = %d\n", ibuf1[(lbk - (256 + 12)) % 256]);
+            }
+            put_block(dev, ibuf0[(lbk - (256 + 12)) / 256], ibuf1);
+            blk = ibuf1[(lbk - (256 + 12)) % 256];
+        }
+        
+        // now write to block on disk
+        get_block(mip->dev, blk, wbuf);
+
+        char *cq = buf;             // read from cq
+        char *cp = wbuf + start;    // write to cp
+
+        if(remain > 0)  // if remain = 0, reach end of lbk
+        {
+            least = nbytes;
+            if(remain < least)
+                least = remain;
+            
+            memcpy(cp, cq, least);  // copy by the least amount
+            nbytes -= least;
+            remain -= least;
+            oftp->offset += least;
+
+            if(oftp->offset > mip->INODE.i_size)    // increase filesize as needed
+                mip->INODE.i_size = oftp->offset;
+        }
+
+        put_block(mip->dev, blk, wbuf); // write to disk
+        // loop if needed
+    }
+
+    mip->dirty = 1;
+    printf("wrote %d bytes into fd = %d\n", oribytes, fd);
+    iput(mip);
+    return oribytes;
 }
 
 
