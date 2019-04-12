@@ -1,0 +1,9 @@
+dd if=/dev/zero of=sdimage bs=1024 count=1440
+mke2fs sdimage -b 1024 1440
+
+mount sdimage /mnt
+(cd /mnt; rm -r *; mkdir bin; mkdir boot; mkdir dev; mkdir etc; mkdir user)
+ls -l /mnt
+
+umount /mnt
+
