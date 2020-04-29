@@ -1,1 +1,1 @@
-# Basuc Operating System
+# Basic Operating System
